@@ -129,7 +129,7 @@ class map(dict):
         if filename:
             if mode==PICKLE or (filename.endswith('.pickle') and not mode):
                 self.save_pickle_file(filename, format)
-            if mode==JSON or (filename.endswith('.json') and not mode):
+            elif mode==JSON or (filename.endswith('.json') and not mode):
                 self.save_json_file(filename, format)
             else:
                 raise Exception('Not sure how to parse file')
@@ -166,7 +166,7 @@ class map(dict):
     
     def load_pickle_file(self, filename, format=''):
         f = open(filename,'rb')
-        data = f.write()
+        data = f.read()
         f.close()
         self.load_pickle_data(data, format)
         
@@ -175,7 +175,10 @@ class map(dict):
             data = base64.b64decode(data)
         if GZIP in format:
             data = zlib.decompress(data)
-        self.map = cPickle.loads(data)
+        data = python_parser().parse(cPickle.loads(data))
+        if CONNECTIONS in format:
+            data = self.parse_connections(data)
+        self.map = data
         
     #saving functions
             
@@ -201,7 +204,7 @@ class map(dict):
         
     def save_pickle_file(self, filename, format=''):
         f = open(filename,'wb')
-        f.write(return_pickle_data(format),f)
+        f.write(self.return_pickle_data(format))
         f.close()
         
     def return_pickle_data(self, format=''):
