@@ -39,6 +39,8 @@ GAME    channel INFO    #channel info
 GAME    channel SAY     message #say something over chat
 GAME    channel TOPIC   string  #set topic
 
+PONG    #reaction to PING
+
 server responses
 
 #some general commands, probably order them with what command should evoke them
@@ -60,7 +62,7 @@ GAME    channel SENDMAP json    #send map data
 GAME    channel END     #signals a game ended
 GAME    channel BEGIN   #signals a game has started
 
-
+PING    #check connection
 
 some data formats
 

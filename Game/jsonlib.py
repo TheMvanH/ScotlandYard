@@ -4,7 +4,7 @@ import json
 import re
 import cPickle
 import zlib
-import copy
+import base64
 
 JSON='json'
 PICKLE='pickle'
@@ -12,27 +12,34 @@ CONNECTIONS='connections'
 GZIP='gzip'
 PRETTY='prettyprint'
 POINTS='points' #formats and modes definition
+ENCODE='base64'
 
 class map(dict):
 
     """this object represents a map according to the points format of ScotlandYard
     it can load maps, convert, save them, to file, and to strings.
-    it takes four possible arguments at initialisation, which it uses to determine what methods to call to handle supplied data. however you can also just initialize it and use the supplied methods to handle your data.
+    it takes three possible arguments at initialisation, which it uses to determine what methods to call to handle supplied data. however you can also just initialize it and use the supplied methods to handle your data.
     possible initialization argumets:
         filename: if set, this file will be loaded. datatype is looked up from the extension (.json/.pickle)
         string: if this is set, this string will be loaded
-        mode: sets/overrides the data type used to intepret the data (PICKLE/JSON)
         format: use this to identify how the data should be handled. possilities are:
             CONNECTIONS: intepret the file like the old connection format.
             POINTS: intepret the file in the points format (default)
             PRETTY: when outputting as json, make the file human-readable. write-only
             GZIP: this file is gzip compressed
+            ENCODE: base64 encoding is applied
+            JSON: this is a json format
+            PICKLE: this is a pickle format
             these can be chained by using the + operator between them
         
     saving can be done using the supplied self.save method, taking as input
         filename: if omitted, output a string. else, write to this file
-        mode: JSON or PICKLE
-        format: same as specified above
+        format: same as specified above, usable:
+            JSON
+            PICKLE
+            GZIP
+            PRETTY
+            ENCODE
         
     save and __init__ both wrap around a list of methods for processing the data
     
@@ -83,8 +90,16 @@ class map(dict):
     note: while it derives from object, it does not support all operations. it is read only.
     """
     
-    def __init__(self,filename=None,string=None,mode=None,format=''):
+    def __init__(self,filename=None,string=None,format=''):
         self.map = {}
+        mode = None
+        if PICKLE in format and JSON in format:
+            raise Exception('conflicting formats')
+        elif PICKLE in format:
+            mode = PICKLE
+        elif JSON in format:
+            mode = JSON
+            
         if filename and string:
             raise Exception('supply a filename or a string, not both')
         if filename:
@@ -102,7 +117,15 @@ class map(dict):
             else:
                 raise Exception('Not sure how to parse string')
                 
-    def save(self,filename=None,mode=None,format=''):
+    def save(self,filename=None,format=''):
+        mode = None
+        if PICKLE in format and JSON in format:
+            raise Exception('conflicting formats')
+        elif PICKLE in format:
+            mode = PICKLE
+        elif JSON in format:
+            mode = JSON
+            
         if filename:
             if mode==PICKLE or (filename.endswith('.pickle') and not mode):
                 self.save_pickle_file(filename, format)
@@ -130,6 +153,8 @@ class map(dict):
         self.load_json_data(data, format)
         
     def load_json_data(self, data, format=''):
+        if ENCODE in format:
+            data = base64.b64decode(data)
         if GZIP in format:
             data = zlib.decompress(data)
         jsondata = json.loads(data)
@@ -146,6 +171,8 @@ class map(dict):
         self.load_pickle_data(data, format)
         
     def load_pickle_data(self, data, format=''):
+        if ENCODE in format:
+            data = base64.b64decode(data)
         if GZIP in format:
             data = zlib.decompress(data)
         self.map = cPickle.loads(data)
@@ -167,9 +194,10 @@ class map(dict):
         else:
             data = json.dumps(map, separators=(',', ':'))
         if GZIP in format:
-            return zlib.compress(data)
-        else:
-            return data
+            data = zlib.compress(data)
+        if ENCODE in format:
+            data = base64.b64encode(data)
+        return data
         
     def save_pickle_file(self, filename, format=''):
         f = open(filename,'wb')
@@ -183,9 +211,10 @@ class map(dict):
             map = self.map
         data = cPickle.dumps(map)
         if GZIP in format:
-            return zlib.compress(data)
-        else:
-            return data
+            data = zlib.compress(data)
+        if ENCODE in format:
+            data = base64.b64encode(data)
+        return data
         
     #parsing functions
     
@@ -234,8 +263,16 @@ class map(dict):
         return self.map.values()
         
 class simple_parser(dict):
-    def __init__(self, data, mode=None, format=''):
+    def __init__(self, data, format=''):
         self.map = {}
+        mode = None
+        if PICKLE in format and JSON in format:
+            raise Exception('conflicting formats')
+        elif PICKLE in format:
+            mode = PICKLE
+        elif JSON in format:
+            mode = JSON
+            
         if isinstance(data, dict):
             self.map = data
         elif mode==JSON or (not mode and data.startswith('{')):
@@ -244,10 +281,12 @@ class simple_parser(dict):
             self.load_pickle_data(data, format)
         else:
             raise Exception('Not sure how to parse file')
-    def save(self, mode, format):
-        if mode==JSON:
+    def save(self, format):
+        if JSON in format and PICKLE in format:
+            Exception('conflicting formats')
+        elif JSON in format:
             return return_json_strring(format)
-        elif mode==PICLE:
+        elif PICKLE in format:
             return return_pickle_string(format)
         else:
             raise Exception('Not sure how to parse file')
@@ -256,10 +295,14 @@ class simple_parser(dict):
     def dict(self):
         return self.map
     def load_json_data(self, data, format):
+        if ENCODE in format:
+            data = base64.b64decode(data)
         if GZIP in format:
             data = zlib.decompress(data)
         self.map = python_parser().parse(json.loads(data))
     def load_pickle_data(self, data, format):
+        if ENCODE in format:
+            data = base64.b64decode(data)
         if GZIP in format:
             data = zlib.decompress(data)
         self.map = cPickle.loads(data)
@@ -269,15 +312,17 @@ class simple_parser(dict):
         else:
             data = json.dumps(self.map, separators=(',', ':'))
         if GZIP in format: 
-            return zlib.compress(data)
-        else:
-            return data
+            data = zlib.compress(data)
+        if ENCODE in format:
+            data = base64.b64encode(data)
+        return data
     def return_pickle_string(self, format):
         data = cPickle.dumps(self.map)
         if GZIP in format:
             return zlib.compress(data)
-        else:
-            return data
+        if ENCODE in format:
+            data = base64.b64encode(data)
+        return data
             
     def __hash__(self):
         return hasher(self)    
