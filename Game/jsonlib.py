@@ -27,7 +27,7 @@ class map(dict):
             POINTS: intepret the file in the points format (default)
             PRETTY: when outputting as json, make the file human-readable. write-only
             GZIP: this file is gzip compressed
-            ENCODE: base64 encoding is applied
+            ENCODE: base64 encoding is applied, for safe stansmission of binary code and space separated commands
             JSON: this is a json format
             PICKLE: this is a pickle format
             these can be chained by using the + operator between them

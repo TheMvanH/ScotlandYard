@@ -11,15 +11,15 @@ class RequestHandler(asynchat.async_chat):
 
     LINE_TERMINATOR = "\r\n"
 
-    def __init__(self, conn_sock, client_address, server, id):
+    def __init__(self, conn_sock, client_address, server, ident):
         asynchat.async_chat.__init__(self, conn_sock)
         self.server             = server
         self.client_address     = client_address
         self.ibuffer            = ''
-        self.ident              = id
+        self.ident              = ident
         self.server.manager.connlist[self.ident] = self
         self.set_terminator(self.LINE_TERMINATOR)
-        self.server.manager.on_join(self.ident)
+        self.server.manager.on_join(self.ident, self.client_address)
         
     def collect_incoming_data(self, data):
         #print "collect_incoming_data: [%s]" % data
@@ -52,22 +52,20 @@ class chatserver(asyncore.dispatcher):
     socket_type                 = socket.SOCK_STREAM
 
 
-    def __init__(self, address, handlerClass=RequestHandler, managerobj = object()):
+    def __init__(self, address, managerobj, handlerClass=RequestHandler):
         self.address            = address
         self.handlerClass       = handlerClass
 
         asyncore.dispatcher.__init__(self)
-        self.create_socket(self.address_family,
-                               self.socket_type)
-
+        self.create_socket(self.address_family, self.socket_type)
+        self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         if self.allow_reuse_address:
             self.set_resue_addr()
-
-        self.server_bind()
-        self.server_activate()
+        self.bind(self.address)
+        self.listen(self.request_queue_size)
         self.manager = managerobj
         self.unique_id_value = 0
-        print "chatserver is running"
+        print "server is running"
         
     def unique_id(self):
         if self.unique_id_value == 2**16:
@@ -75,39 +73,32 @@ class chatserver(asyncore.dispatcher):
         self.unique_id_value+=1
         return self.unique_id_value-1
 
-    def server_bind(self):
-        self.bind(self.address)
-
-    def server_activate(self):
-        self.listen(self.request_queue_size)
-
-    def fileno(self):
-        return self.socket.fileno()
-
     def serve_forever(self):
-        asyncore.loop()
-    # TODO: try to implement handle_request()
+        try:
+            asyncore.loop()
+        except KeyboardInterrupt:
+            print "killed by user"
+            self.handle_close()
+        except:
+            print "uncaught python Exception in server loop"
+            raise
 
-    # Internal use
     def handle_accept(self):
+        print "connection being made"
         (conn_sock, client_address) = self.accept()
         if self.verify_request(conn_sock, client_address):
             self.process_request(conn_sock, client_address)
 
-
     def verify_request(self, conn_sock, client_address):
-        return True
-
+        return self.manager.allow_connect(client_address)
 
     def process_request(self, conn_sock, client_address):
-        id = self.unique_id()
-        self.handlerClass(conn_sock, client_address, self, id)
-        
+        ident = self.unique_id()
+        self.handlerClass(conn_sock, client_address, self, ident)
         print "conn_made: client_address=%s:%s at id=%s" % \
                      (client_address[0],
                       client_address[1],
-                      id)
-
+                      ident)
 
     def handle_close(self):
         #print "closing the server"
@@ -122,6 +113,7 @@ class Manager(object):
     Manager.on_recv(id,message) is called on receiving a message
     Manager.on_join(id) is called on someone joining the server
     Manager.on_leave(id) is called when an id leaves the server
+    Manager.allow_connect(client_address) is called when an ip tries to connect. return True to allow access
     futher, these methods are available to output
     Manager.send(id, message) will send a string to id
     Manager.sendall(message) will send a string to all connections
@@ -136,34 +128,35 @@ class Manager(object):
     def __init__(self, ADDRESS=(HOST,PORT)):
         self.ADDRESS = ADDRESS
         self.connlist = {}
-        self.server = chatserver(self.ADDRESS,RequestHandler,self)
+        self.server = chatserver(self.ADDRESS, self, RequestHandler)
         serverthread = threading.Thread(name='server_thread',target=self.server.serve_forever)
         serverthread.start()
         
-    def on_recv(self, id, message):
-        print 'id=',id,'says: ',message
+    def on_recv(self, ident, message):
+        print 'id=',ident,'says: ',message
+
+    def allow_connect(self, client_address):
+        return True
         
-    def on_join(self, id):
-        print 'id:', id, 'joined'
+    def on_join(self, ident, client_address):
+        print 'id:', ident, 'at', client_address, 'joined'
         
-    def on_leave(self, id):
-        print 'id:', id, 'left'
+    def on_leave(self, ident):
+        print 'id:', ident, 'left'
         
-    def send(self, id, message):
-        self.connlist[id].send_data(message.replace('\r\n','\n'))
+    def send(self, ident, message):
+        self.connlist[ident].send_data(message.replace('\r\n','\n'))
         
     def sendall(self, message):
-        [self.send(id,message) for id in self.connlist]
-        # for id in self.connlist:
-        #     self.send(id, message)
+        [self.send(ident,message) for ident in self.connlist]
             
     def kick(self, id):
-        self.connlist[id].handle_close()
+        self.connlist[ident].handle_close()
             
     def shutdown(self):
         temp = []
-        for id in self.connlist:
-            temp.append(self.connlist[id])
+        for ident in self.connlist:
+            temp.append(self.connlist[ident])
         for connection in temp:
             connection.handle_close()
         self.server.handle_close()

@@ -16,6 +16,7 @@ class RequestHandler(asynchat.async_chat):
         self.ibuffer            = ''
         self.set_terminator(self.LINE_TERMINATOR)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.connect(ADDRESS)
         
     def collect_incoming_data(self, data):
