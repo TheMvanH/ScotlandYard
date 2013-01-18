@@ -288,7 +288,7 @@ class simple_parser(dict):
         if JSON in format and PICKLE in format:
             Exception('conflicting formats')
         elif JSON in format:
-            return return_json_strring(format)
+            return return_json_string(format)
         elif PICKLE in format:
             return return_pickle_string(format)
         else:
