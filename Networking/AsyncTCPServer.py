@@ -30,9 +30,12 @@ class RequestHandler(asynchat.async_chat):
         self.server.manager.on_recv(self.ident, self.ibuffer)
         self.ibuffer = ''
         
-    def send_data(self, data):
+    def send_data(self, data, raw=False):
         #print "sending: [%s]" % data
-        self.push(data+self.LINE_TERMINATOR)
+        if raw:
+            self.push(data)
+        else:
+            self.push(data+self.LINE_TERMINATOR)
         
     def handle_close(self):
         #print "conn_closed: client_address=%s:%s" % \
@@ -144,8 +147,8 @@ class Manager(object):
     def on_leave(self, ident):
         print 'id:', ident, 'left'
         
-    def send(self, ident, message):
-        self.connlist[ident].send_data(message.replace('\r\n','\n'))
+    def send(self, ident, message, raw=False):
+        self.connlist[ident].send_data(message.replace('\r\n','\n'), raw)
         
     def sendall(self, message):
         [self.send(ident,message) for ident in self.connlist]

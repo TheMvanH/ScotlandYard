@@ -39,6 +39,9 @@ class ChannelServer(object):
                 raise Exception('error in command parsing: empty command')
 
             if   commandpart[0] == 'USER':
+                ###########################################################
+                ############ USER commands
+                ###########################################################
                 if   commandpart[1] == 'NAME':
                     if len(commandpart) == 3:
                         user.set_username(commandpart[2])
@@ -75,19 +78,111 @@ class ChannelServer(object):
                 else:
                     raise Exception('Unknown command, USER supports NAME, PASS, SETPASS, MODE, INFO and ADMIN')
             elif commandpart[0] == 'GAME':
-                pass
+                ###########################################################
+                ############ GAME commands
+                ###########################################################
+                raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement
             elif commandpart[0] == 'ADMIN':
-                pass
+                ###########################################################
+                ############ ADMIN commands
+                ###########################################################
+                if   not 'a' in user.modes:
+                    raise Exception('You don\' have admin status')
+                elif commandpart[1] == 'KILL':
+                    if len(commandpart) == 3:
+                        target = self.get_user_by_name(commandpart[2])
+                        self.backend.kick(target.ident)
+                    else:
+                        raise Exception('KILL takes one command')
+                elif commandpart[1] == 'BAN':
+                    if   commandpart[2] == 'IP':
+                        if len(commandpart) == 4 and re.search('^[0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}$',commandpart[3]):
+                            self.Database.addban(commandpart[3])
+                        else:
+                            raise Exception('Malformatted IP')
+                    elif commandpart[2] == 'USER':
+                        if len(commandpart) == 4:
+                            user = self.get_user_by_name(commandpart[3])
+                            self.Database.addban(user.ip)
+                        else:
+                            raise Exception('Malformatted username')
+                    else:
+                        raise Exception('ADMIN BAN takes either USER or IP as subcommand')
+                elif commandpart[1] == 'UNBAN':
+                    if   commandpart[2] == 'IP':
+                        if len(commandpart) == 4 and re.search('^[0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}$',commandpart[3]):
+                            self.Database.removeban(commandpart[3])
+                        else:
+                            raise Exception('Malformatted IP')
+                    elif commandpart[2] == 'USER':
+                        if len(commandpart) == 4:
+                            user = self.get_user_by_name(commandpart[3])
+                            self.Database.removeban(user.ip)
+                        else:
+                            raise Exception('Malformatted username')
+                    else:
+                        raise Exception('ADMIN UNBAN takes either USER or IP as subcommand')
+                elif commandpart[1] == 'WIPE':
+                    if len(commandpart == 2):
+                        both_failed = 0
+                        try:
+                            self.Database.wipe(commandpart[2])
+                        except:
+                            both_failed+=1 #user not in database
+                        try:
+                            self.get_user_by_name(commandpart[2]).wipe()
+                        except:
+                            both_failed+=1 #probably couldn't find user online
+                        if both_failed == 2:
+                            raise Exception('user not in database nor online')
+                    else:
+                        raise Exception('malformatted request')
+                elif commandpart[1] == 'DESTROY':
+                    raise Exception('NOT IMPLEMENTED ERROR')
+                elif commandpart[1] == 'EXECUTE':
+                    if len(commandpart) > 2:
+                        commandcode = ' '.join(commandpart[2:])
+                        err = res = None
+                        try:
+                            exec commandcode
+                        except SyntaxError:
+                            try:
+                                res = eval(commandcode)
+                            except Exception as e:
+                                err = str(e)
+                        except Exception as e:
+                            err = str(e)
+                        if res:
+                            self.send(user, 'USER RESULT '+res)
+                        elif err:
+                            self.send(user, 'USER ERROR '+err)
+                    else:
+                        raise Exception('missing argument')
+                elif commandpart[1] == 'BROADCAST':
+                    if len(commandpart) == 3:
+                        self.backend.sendall('USER ' + commandpart[2])
+                    else:
+                        raise Exception('malformatted request')
+
             elif commandpart[0] == 'QUERY':
+                ###########################################################
+                ############ QUERY command
+                ###########################################################
                 if len(commandpart) > 2:
                     receiver = self.get_user_by_name(commandpart[1])
                     message  = re.search('QUERY[\r\n ]+[^\r\n ]+[\r\n ]+(.*)', command, re.DOTALL).group(1)
                 else:
                     raise Exception('no message detected')
             elif commandpart[0] == 'PONG':
-                pass
+                ###########################################################
+                ############ PONG command
+                ###########################################################
+                raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement, shoud reset last response timer
             else:
+                #catchall
                 raise Exception('Command not recognized')
+        except Exception as error:
+            self.send(user, 'ERROR '+ ' '.join(error.args))
 
 
     #backend code
@@ -106,8 +201,10 @@ class ChannelServer(object):
    		return not (client_address[0] in self.Database.ip_bans()):
     def kick(self, user):
         self.backend.kick(self, user.ident)
-    def send(self, user):
+    def send(self, user, message):
         self.backend.send(self, user.ident, message)
+    def sendall(self, message):
+        self.backend.send(message)
 
     #utility code
     def get_user_by_name(self, username):

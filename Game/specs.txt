@@ -13,8 +13,8 @@ USER    ADMIN   adminpass #set adminmode on
 
 #these commands only available to people with mode +a. generally server-wide stuff
 ADMIN   KILL    username #kill a username from the server
-ADMIN   BAN     username #set an ip/username ban
-ADMIN   UNBAN   username #remove an username/ip ban
+ADMIN   BAN     IP/USER  ip/username #set an ip/username ban
+ADMIN   UNBAN   IP/USER  ip/username #remove an username/ip ban
 ADMIN   WIPE    username #remove all data on a username
 ADMIN   DESTROY channel  #wipes the data on this channel, and all data associated with it
 ADMIN   EXECUTE code     #execute python code, extreme caution provided
@@ -51,7 +51,7 @@ WARNING str     #all errors which still complete their operation go here
 QUERY   user    MSG     message #receive a pm
 
 USER    message #the server says something to you, use as a general command to return info
-USER    user    SETINFO json    #user info
+USER    SETINFO user     json    #user info
 
 GAME    channel user    MSG     message #a message has been received at this channel from user
 GAME    channel SETINFO json    #channel info

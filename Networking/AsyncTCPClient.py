@@ -28,9 +28,12 @@ class RequestHandler(asynchat.async_chat):
         self.source.on_recv(self.ibuffer)
         self.ibuffer = ''
         
-    def send_data(self, data):
+    def send_data(self, data, raw=False):
         #print "sending: [%s]" % data
-        self.push(data+self.LINE_TERMINATOR)
+        if raw:
+            self.push(data)
+        else:
+            self.push(data+self.LINE_TERMINATOR)
         
     def handle_close(self):
         self.source._disconnect()
@@ -96,9 +99,9 @@ class Manager(object):
     def on_disconnect(self):
         print 'disconnected from the server'
         
-    def send(self, message):
+    def send(self, message, raw=False):
         if self._connected:
-            self.client.send_data(message.replace('\r\n','\n'))
+            self.client.send_data(message.replace('\r\n','\n'), raw)
         return self._connected
         
     def shutdown(self):
