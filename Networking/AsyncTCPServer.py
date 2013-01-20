@@ -2,6 +2,9 @@ import asynchat
 import threading
 import asyncore
 import socket
+import re
+from hashlib import sha1
+from base64 import b64encode
 
 HOST, PORT = "127.0.0.1", 9999
 socket.setdefaulttimeout(10)
@@ -45,6 +48,112 @@ class RequestHandler(asynchat.async_chat):
             self.server.manager.on_leave(self.ident)
             del self.server.manager.connlist[self.ident]
         asynchat.async_chat.handle_close(self)
+
+class WebSocket(RequestHandler):
+    """a requesthandler for websockets"""
+
+    LINE_TERMINATOR = "\r\n\r\n"
+
+    def __init__(self, conn_sock, client_address, server, ident):
+        asynchat.async_chat.__init__(self, conn_sock)
+        self.server             = server
+        self.client_address     = client_address
+        self.ibuffer            = ''
+        self.ident              = ident
+        self.server.manager.connlist[self.ident] = self
+        self.set_terminator(self.LINE_TERMINATOR)
+        self.server.manager.on_join(self.ident, self.client_address)
+        self.state              = 'responseheader'
+
+    def collect_incoming_data(self, data):
+        #print "collect_incoming_data: [%s]" % data
+        if self.state == 'responseheader':
+            self.ibuffer += data
+        else:
+            #here follows the data decoding algorithm
+            self.ibuffer += data
+            if len(self.ibuffer)<6: #didn't get complete headers yet
+                return
+            elif self.ibuffer[0] != '\x81': #final transmission response header
+                self.handle_close() #we don't like your kind of packets around here
+            elif (ord(self.ibuffer[1]) & 127) <126:
+                #packet of length <126, 2 chars of header, 4 mask, and self.ibuffer[1] & 127 length
+                packlength = 6 + (ord(self.ibuffer[1]) & 127)
+                if len(self.ibuffer)>=packlength:
+                    self.handle_packet(self.ibuffer[2:6], self.ibuffer[6:packlength])
+                    self.ibuffer = self.ibuffer[packlength:]
+                    self.collect_incoming_data('')
+                else:
+                    return #packet not yet fully received
+            elif len(self.ibuffer)<8: #header even larger
+                return
+            elif (ord(self.ibuffer[1]) & 127) == 126:
+                packlength = 8 + int(self.ibuffer[2:4].encode('hex'),16)
+                if len(self.ibuffer)>=packlength:
+                    self.handle_packet(self.ibuffer[4:8], self.ibuffer[8:packlength])
+                    self.ibuffer = self.ibuffer[packlength:]
+                    self.collect_incoming_data('')
+                else:
+                    return #packet not yet fully received
+            elif len(self.ibuffer)<14: #the header is even larger
+                return
+            elif(ord(self.ibuffer[1]) & 127) == 127:
+                packlength = 14 + int(self.ibuffer[2:10].encode('hex'),16)
+                if len(self.ibuffer)>=packlength:
+                    self.handle_packet(self.ibuffer[10:14], self.ibuffer[14:packlength])
+                    self.ibuffer = self.ibuffer[packlength:]
+                    self.collect_incoming_data('')
+                else:
+                    return #packet not fully received yet
+            else:
+                self.handle_close() #nonconforming packet
+
+    def handle_packet(self, key, data):
+        #implements the actual decoding
+        result = ''
+        for i in range(len(data)):
+            j = i % 4
+            result += chr(ord(data[i]) ^ ord(key[j]))
+        self.server.manager.on_recv(self.ident, result)
+        
+    def found_terminator(self):
+        #print "found_terminator"
+        message = self.ibuffer
+        if self.state == 'responseheader': #we've received the upgrade request
+            if re.search('GET \S+ HTTP/1[.]1',message) and 'Upgrade: websocket' in message:
+                #print 'received request\n', message
+                code = re.search('Sec-WebSocket-Key: (\S+)', message, re.I).group(1)
+                code += '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' #websocket magic key
+                returncode = b64encode(sha1(code).digest())
+                returnmessage = 'HTTP/1.1 101 WebSocket Protocol Handshake\r\nConnection: Upgrade\r\n\
+Server: Scotland Yard\r\nUpgrade: websocket\r\nAccess-Control-Allow-Origin: %s\r\nAccess-Control-Allow-Credentials: true\r\n\
+Sec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: chat\r\nAccess-Control-Allow-Headers: content-type\r\n\r\n' % (self.server.address[0],returncode)
+                #print 'sending headers\n', returnmessage
+                self.ibuffer = ''
+                self.state = 'binarytransfer'
+                self.send_data(returnmessage, binary=False)
+            else:
+                self.handle_close() #not a websocket request, bugger off
+
+    def send_data(self, data, binary=True):
+        #print "sending: [%s]" % data
+        if binary:
+            #create the necessary data headers
+            header = '\x81' #10000001
+            if len(data)<126:
+                header += chr(len(data))
+            elif len(data) <= (2**16):
+                header += '\x7e' #01111110
+                header += ('0'*(6-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
+            elif len(data) <= (2**64):
+                header += '\x7f' #01111111
+                header += ('0'*(10-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
+            else: 
+                raise Exception('No strings larger than 2 GB allowed. how the hell did you even')
+            print header+data
+            self.push(header+data)
+        else:
+            self.push(data)
         
 class chatserver(asyncore.dispatcher):
     """a server dispatcher based on asyncore.dispatcher. It assigns each connection an unique ID and adds it to a manager connlist dict
@@ -128,10 +237,11 @@ class Manager(object):
     self.ADDRESS is the server address
     """
     
-    def __init__(self, ADDRESS=(HOST,PORT)):
+    def __init__(self, ADDRESS=(HOST,PORT), requesthandler = RequestHandler):
         self.ADDRESS = ADDRESS
         self.connlist = {}
-        self.server = chatserver(self.ADDRESS, self, RequestHandler)
+        self.requesthandler = requesthandler
+        self.server = chatserver(self.ADDRESS, self, self.requesthandler)
         serverthread = threading.Thread(name='server_thread',target=self.server.serve_forever)
         serverthread.start()
         
@@ -148,12 +258,16 @@ class Manager(object):
         print 'id:', ident, 'left'
         
     def send(self, ident, message, raw=False):
-        self.connlist[ident].send_data(message.replace('\r\n','\n'), raw)
+        if (self.requesthandler == WebSocket):
+            raw = True
+        if not raw:
+            message = message.replace('\r\n','\n')
+        self.connlist[ident].send_data(message, raw)
         
     def sendall(self, message):
         [self.send(ident,message) for ident in self.connlist]
             
-    def kick(self, id):
+    def kick(self, ident):
         self.connlist[ident].handle_close()
             
     def shutdown(self):
