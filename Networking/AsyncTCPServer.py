@@ -5,6 +5,7 @@ import socket
 import re
 from hashlib import sha1
 from base64 import b64encode
+import time
 
 HOST, PORT = "127.0.0.1", 9999
 socket.setdefaulttimeout(10)
@@ -13,6 +14,8 @@ class RequestHandler(asynchat.async_chat):
     """A request handler based on async_chat, for an asynchronous server"""
 
     LINE_TERMINATOR = "\r\n"
+    ac_in_buffer_size = 4096
+    ac_out_buffer_size = 2**16
 
     def __init__(self, conn_sock, client_address, server, ident):
         asynchat.async_chat.__init__(self, conn_sock)
@@ -53,6 +56,7 @@ class WebSocket(RequestHandler):
     """a requesthandler for websockets"""
 
     LINE_TERMINATOR = "\r\n\r\n"
+    
 
     def __init__(self, conn_sock, client_address, server, ident):
         asynchat.async_chat.__init__(self, conn_sock)
@@ -64,6 +68,7 @@ class WebSocket(RequestHandler):
         self.set_terminator(self.LINE_TERMINATOR)
         self.server.manager.on_join(self.ident, self.client_address)
         self.state              = 'responseheader'
+        self.max_data_length    = 2**16-10
 
     def collect_incoming_data(self, data):
         #print "collect_incoming_data: [%s]" % data
@@ -135,23 +140,37 @@ Sec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: chat\r\nAccess-Control-Allow
             else:
                 self.handle_close() #not a websocket request, bugger off
 
-    def send_data(self, data, binary=True):
+    def send_data(self, data, binary=True, header = '\x81'):
         #print "sending: [%s]" % data
         if binary:
             #create the necessary data headers
-            header = '\x81' #10000001
+            #header = 10000001
             if len(data)<126:
                 header += chr(len(data))
+                print header.encode('hex')
+                self.push(header+data)
             elif len(data) <= (2**16):
                 header += '\x7e' #01111110
                 header += ('0'*(6-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
+                print header.encode('hex')
+                self.push(header+data)
             elif len(data) <= (2**64):
                 header += '\x7f' #01111111
                 header += ('0'*(18-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
+                print header.encode('hex')
+                self.push(header+data)
+                #ind = 0
+                #while True:
+                #    header = ('\x01' if ind == 0 else '\x00') if ((ind+self.max_data_length)<len(data)) else '\x80'
+                #    self.send_data(data[ind: ind+self.max_data_length], header = header)
+                #    ind+=self.max_data_length
+                #    if ind >= len(data):
+                #        break
+                #    time.sleep(0.1)
+                #    while not len(self.producer_fifo)==0:
+                #        time.sleep(0.1)
             else: 
                 raise Exception('No strings larger than 2 GB allowed. how the hell did you even')
-            print header.encode('string-escape')
-            self.push(header+data)
         else:
             self.push(data)
         
