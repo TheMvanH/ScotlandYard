@@ -147,10 +147,10 @@ Sec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: chat\r\nAccess-Control-Allow
                 header += ('0'*(6-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
             elif len(data) <= (2**64):
                 header += '\x7f' #01111111
-                header += ('0'*(10-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
+                header += ('0'*(18-len(hex(len(data))))+hex(len(data))[2:]).decode('hex')
             else: 
                 raise Exception('No strings larger than 2 GB allowed. how the hell did you even')
-            print header+data
+            print header.encode('string-escape')
             self.push(header+data)
         else:
             self.push(data)
