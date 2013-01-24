@@ -1,34 +1,39 @@
 #Channel server
 from Networking import AsyncTCPServer
 from Game import jsonlib
+import config
 import hashlib
 import re
+import os.path
+import sqlite3
 
 class ComManager(AsyncTCPServer.Manager):
-	"""subclass AsyncTCPServer to hook into the server object"""
-	def __init__(self, ADDRESS, upper):
-		self.upper = upper
-		AsyncTCPServer.__init__(self, ADDRESS)
+    """subclass AsyncTCPServer to hook into the server object"""
+    def __init__(self, ADDRESS, requesthandler, upper):
+        self.upper = upper
+        AsyncTCPServer.Manager.__init__(self, ADDRESS, requesthandler)
 
-	def on_recv(self, ident, message):
-		self.upper.recv(ident, message)
-	def on_join(self, ident, client_address):
-		self.upper.join(ident, client_address)
-	def on_leave(self, ident):
-		self.upper.leave(ident)
-	def allow_connect(self, ident, client_address):
-		self.allow_connect(client_address)
+    def on_recv(self, ident, message):
+        self.upper.on_recv(ident, message)
+    def on_join(self, ident, client_address):
+        self.upper.on_join(ident, client_address)
+    def on_leave(self, ident):
+        self.upper.on_leave(ident)
+    def allow_connect(self, client_address):
+        return self.upper.allow_connect(client_address)
 
 class ChannelServer(object):
     """TODO: server logic, short description of everything goes here.
     there should be a list of users and a list of games. the underlying id's should be abstracted to user objects immediately
     the user objects should be initiated by on_join, and a database should be kept to be able to recall the state of all. 
     """
-    def __init__(self, ADDRESS=('127.0.0.1',9999)):
-        self.Database = Database()
+    def __init__(self):
+        self.Database = Database(config.database)
         self.activeuserlist = []
         self.activegamelist = []
-        self.backend = ComManager(ADDRESS, self)
+        self.backend = ComManager(
+            [(config.host, config.server_port),(config.host, config.websocket_port)], 
+            [AsyncTCPServer.RequestHandler, AsyncTCPServer.WebSocket], self)
         self.split = re.compile('[\n\r ]+').split
         self.format = jsonlib.JSON+jsonlib.ENCODE
     def command_parser(self, user, command):
@@ -45,16 +50,19 @@ class ChannelServer(object):
                 if   commandpart[1] == 'NAME':
                     if len(commandpart) == 3:
                         user.set_username(commandpart[2])
+                        self.send(user, 'USER Username set to ' + commandpart[2])
                     else:
                         raise Exception('username should be one word, without spaces')
                 elif commandpart[1] == 'PASS':
                     if len(commandpart) == 3:
                         user.identify(commandpart[2])
+                        self.send(user, 'USER Identified for '+ user.username)
                     else:
                         raise Exception('password should be one word, without spaces')
                 elif commandpart[1] == 'SETPASS':
                     if len(commandpart) == 3:
                         user.set_password(commandpart[2])
+                        self.send(user, 'USER Set password for '+user.username)
                     else:
                         raise Exception('password should be one word, without spaces')
                 elif commandpart[1] == 'MODE':
@@ -66,7 +74,7 @@ class ChannelServer(object):
                         if len(commandpart) == 2:
                             testuser = user
                         else:
-                            testuser = get_user_by_name(commandpart[2])
+                            testuser = self.get_user_by_name(commandpart[2])
                         info = testuser.info()
                         infostr = jsonlib.simple_parser(info).save(self.format)
                         self.send(user, 'USER INFO '+infostr)
@@ -171,6 +179,7 @@ class ChannelServer(object):
                 if len(commandpart) > 2:
                     receiver = self.get_user_by_name(commandpart[1])
                     message  = re.search('QUERY[\r\n ]+[^\r\n ]+[\r\n ]+(.*)', command, re.DOTALL).group(1)
+                    self.send(self.get_user_by_name(commandpart[1]), 'QUERY ' + user.username +' '+message)
                 else:
                     raise Exception('no message detected')
             elif commandpart[0] == 'PONG':
@@ -182,35 +191,39 @@ class ChannelServer(object):
                 #catchall
                 raise Exception('Command not recognized')
         except Exception as error:
-            self.send(user, 'ERROR '+ ' '.join(error.args))
+            self.send(user, 'ERROR '+ str(error))
 
 
     #backend code
     def on_recv(self, ident, message):
-    	self.command_parser(self.get_user_by_ident(ident), message)
+        self.command_parser(self.get_user_by_ident(ident), message)
     def on_join(self, ident, client_address):
         user = User(ident, client_address, self.Database)
         self.activeuserlist.append(user)
-    	pass
-   	def on_leave(self, ident):
-   		user = self.get_user_by_ident(ident)
+    def on_leave(self, ident):
+        user = self.get_user_by_ident(ident)
         user.save()
         self.activeuserlist.remove(user)
         del user
-   	def allow_connect(self, ident, client_address):
-   		return not (client_address[0] in self.Database.ip_bans()):
+    def allow_connect(self, client_address):
+        return not (client_address[0] in self.Database.ip_bans())
     def kick(self, user):
-        self.backend.kick(self, user.ident)
+        self.backend.kick(user.ident)
     def send(self, user, message):
-        self.backend.send(self, user.ident, message)
+        self.backend.send(user.ident, message)
     def sendall(self, message):
         self.backend.send(message)
+    def shutdown(self):
+        #graceful shutdown
+        self.backend.shutdown()
+        del self.backend
 
     #utility code
     def get_user_by_name(self, username):
         for user in self.activeuserlist:
             if user.username == username:
                 return user
+        
         raise Exception('user not found')
     def get_user_by_ident(self, ident):
         for user in self.activeuserlist:
@@ -238,7 +251,7 @@ class User(object):
         for game in self.games:
             game.update_info()
     def set_password(self, passhash):
-        if self.username in self.Database.accounts()
+        if self.username in self.Database.accounts():
             raise Exception('This username is already registered')
         else:
             self.password = hashlib.md5(passhash).hexdigest() #hash password.
@@ -272,17 +285,45 @@ class User(object):
 class Database(object):
     """wrapper around database"""
     #TODO: implement database
-    def __init__(self):
-        pass
+    #tables:
+    #   users:
+    #       username
+    #       password
+    #       ip
+    #   ipbans:
+    #       ip
+    #   server     misc server storage
+    #       key
+    #       value
+    def __init__(self, filename):
+        filename = config.database
+        if not os.path.isfile(filename):
+            db = sqlite3.connect(filename)
+            c = db.cursor()
+            c.execute("CREATE TABLE users (username, password, ip)")
+            c.execute("CREATE TABLE ipbans (ip)")
+            c.execute("CREATE TABLE server (key, value)")
+            c.execute("INSERT INTO server VALUES (?,?)",("adminpassword",hashlib.md5(config.adminpass).hexdigest()))
+            db.commit()
+            db.close()
+        self.db = sqlite3.connect(filename)
+        self.db.text_factory = str
+        self.cursor = self.db.cursor()
     def ip_bans(self):
-        return [] #TODO: return banned ip's
+        return [i for i in self.cursor.execute('SELECT * FROM ipbans')]
+    def addban(self, ip):
+        c.execute("INSERT INTO ipbans VALUES (?)",(ip,))
+    def removeban(self, ip):
+        c.execute("DELETE FROM ipbans WHERE ip=?",(ip,))
     def accounts(self):
-        return [] #list of usernames
+        return [i[0] for i in self.cursor.execute('SELECT username FROM users')] #list of usernames
     def verify(self, username, password):
-        return True #TODO: implement username password database
+        return (username, password) in [i for i in self.cursor.execute('SELECT username, password FROM users')] 
     def checkadminpass(self, adminpass):
-        if hashlib.md5(adminpass).hexdigest() == None:
-            pass
-        return True #TODO: Implement in database
-    def setadminpass(self, adminpass)
-        pass = hashlib.md5(adminpass).hexdigest() #TODO: store in database
+        return hashlib.md5(adminpass).hexdigest() == self.cursor.execute('SELECT value FROM server WHERE key="adminpassword"'):
+    def setadminpass(self, adminpass):
+        self.cursor.execute('UPDATE server SET value=? WHERE key="adminpassword"',(hashlib.md5(adminpass).hexdigest(),))
+
+    def shutdown(self):
+        self.db.commit()
+        self.db.close()

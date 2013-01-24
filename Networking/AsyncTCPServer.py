@@ -5,7 +5,7 @@ import socket
 import re
 from hashlib import sha1
 from base64 import b64encode
-import time
+#import time
 
 HOST, PORT = "127.0.0.1", 9999
 socket.setdefaulttimeout(10)
@@ -195,14 +195,7 @@ class chatserver(asyncore.dispatcher):
         self.bind(self.address)
         self.listen(self.request_queue_size)
         self.manager = managerobj
-        self.unique_id_value = 0
-        print "server is running"
-        
-    def unique_id(self):
-        if self.unique_id_value == 2**16:
-            self.unique_id_value = 0
-        self.unique_id_value+=1
-        return self.unique_id_value-1
+        print "server is running at", self.address[1], "with handler", handlerClass
 
     def serve_forever(self):
         try:
@@ -224,7 +217,7 @@ class chatserver(asyncore.dispatcher):
         return self.manager.allow_connect(client_address)
 
     def process_request(self, conn_sock, client_address):
-        ident = self.unique_id()
+        ident = self.manager.unique_id()
         self.handlerClass(conn_sock, client_address, self, ident)
         print "conn_made: client_address=%s:%s at id=%s" % \
                      (client_address[0],
@@ -257,13 +250,26 @@ class Manager(object):
     """
     
     def __init__(self, ADDRESS=(HOST,PORT), requesthandler = RequestHandler):
+        if not(isinstance(ADDRESS, list) and isinstance(requesthandler, list)):
+            ADDRESS = [ADDRESS]
+            requesthandler = [requesthandler]
         self.ADDRESS = ADDRESS
         self.connlist = {}
-        self.requesthandler = requesthandler
-        self.server = chatserver(self.ADDRESS, self, self.requesthandler)
-        serverthread = threading.Thread(name='server_thread',target=self.server.serve_forever)
+        self.server = []
+        self.unique_id_value = 0
+        #self.requesthandler = requesthandler
+        for index in range(len(ADDRESS)):
+            server = chatserver(self.ADDRESS[index], self, requesthandler[index])
+            self.server.append(server)
+        serverthread = threading.Thread(name='server_thread', target=asyncore.loop)
         serverthread.start()
-        
+
+    def unique_id(self):
+        if self.unique_id_value == 2**16:
+            self.unique_id_value = 0
+        self.unique_id_value+=1
+        return self.unique_id_value-1
+
     def on_recv(self, ident, message):
         print 'id=',ident,'says: ',message
 
@@ -277,10 +283,10 @@ class Manager(object):
         print 'id:', ident, 'left'
         
     def send(self, ident, message, raw=False):
-        if (self.requesthandler == WebSocket):
-            raw = True
         if not raw:
             message = message.replace('\r\n','\n')
+        if isinstance(self.connlist[ident],WebSocket):
+            raw = True
         self.connlist[ident].send_data(message, raw)
         
     def sendall(self, message):
@@ -295,6 +301,7 @@ class Manager(object):
             temp.append(self.connlist[ident])
         for connection in temp:
             connection.handle_close()
-        self.server.handle_close()
-        del self.server
+        for server in self.server:
+            server.handle_close()
+            del server
         del self

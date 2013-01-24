@@ -15,9 +15,9 @@ class Manager(AsyncTCPServer.Manager):
                     
 serverIO = None
                     
-def run(ADDRESS = ('192.168.2.15',9999)):
+def run(ADDRESS = [('192.168.2.15',9999), ('192.168.2.15',9998), ('192.168.2.15',9997)],requesthandler = [AsyncTCPServer.RequestHandler, AsyncTCPServer.WebSocket, AsyncTCPServer.RequestHandler]):
     global serverIO
-    serverIO = Manager(ADDRESS)
+    serverIO = Manager(ADDRESS, requesthandler)
 
 def shutdown():
     global serverIO
