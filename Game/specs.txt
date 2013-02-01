@@ -10,6 +10,7 @@ USER    SETPASS password  #register account and set a password
 USER    MODE    +modes -modes #change user modes
 USER    INFO    username #request info on user
 USER    ADMIN   adminpass #set adminmode on
+USER    GHOST   username password #gtfo my username
 
 #these commands only available to people with mode +a. generally server-wide stuff
 ADMIN   KILL    username #kill a username from the server
@@ -21,7 +22,7 @@ ADMIN   EXECUTE code     #execute python code, extreme caution provided
 ADMIN   BROADCAST   message #broadcast a message over the entire server
 
 #these relate to individual games
-GAME    channel CREATE   #spawn a game, handled by the channel, only registered users, makes creator +a
+                 GAME    channel CREATE   #spawn a game, handled by the channel, only registered users, makes creator +a #depreciated, should be implicit on first join
 GAME    channel DESTROY  #destroy the game, only for +ao
 GAME    channel RESET    #reset the game, only for +ao
 GAME    channel JOIN     #join this game, makes you a spectator
@@ -50,7 +51,7 @@ WARNING str     #all errors which still complete their operation go here
 
 QUERY   user    MSG     message #receive a pm
 
-USER    message #the server says something to you, use as a general command to return info
+USER    MESSAGE message #the server says something to you, use as a general command to return info
 USER    SETINFO user     json    #user info
 
 GAME    channel user    MSG     message #a message has been received at this channel from user

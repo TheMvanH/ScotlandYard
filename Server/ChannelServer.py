@@ -34,10 +34,11 @@ class ChannelServer(object):
         self.backend = ComManager(
             [(config.host, config.server_port),(config.host, config.websocket_port)], 
             [AsyncTCPServer.RequestHandler, AsyncTCPServer.WebSocket], self)
-        self.split = re.compile('[\n\r ]+').split
+        self.split = re.compile('[\n\r ]+(?!$)').split
         self.format = jsonlib.JSON+jsonlib.ENCODE
     def command_parser(self, user, command):
         """this function is responsible for the parsing of all commands which are sent to the server"""
+        command = command.strip()
         try:
             commandpart = self.split(command) #split command for analysis, see specs.txt for overview
             if len(commandpart) == 0:
@@ -48,150 +49,159 @@ class ChannelServer(object):
                 ############ USER commands
                 ###########################################################
                 if   commandpart[1] == 'NAME':
-                    if len(commandpart) == 3:
-                        user.set_username(commandpart[2])
-                        self.send(user, 'USER Username set to ' + commandpart[2])
-                    else:
-                        raise Exception('username should be one word, without spaces')
+                    if len(commandpart) != 3: raise Exception('username should be one word, without spaces')
+                    user.set_username(commandpart[2])
+                    self.send(user, 'USER MESSAGE Username set to ' + commandpart[2])
+
                 elif commandpart[1] == 'PASS':
-                    if len(commandpart) == 3:
-                        user.identify(commandpart[2])
-                        self.send(user, 'USER Identified for '+ user.username)
-                    else:
-                        raise Exception('password should be one word, without spaces')
+                    if len(commandpart) != 3: raise Exception('password should be one word, without spaces')
+                    user.identify(commandpart[2])
+                    self.send(user, 'USER MESSAGE Identified for '+ user.username)
+                    
                 elif commandpart[1] == 'SETPASS':
-                    if len(commandpart) == 3:
-                        user.set_password(commandpart[2])
-                        self.send(user, 'USER Set password for '+user.username)
-                    else:
-                        raise Exception('password should be one word, without spaces')
+                    if len(commandpart) != 3: raise Exception('password should be one word, without spaces')
+                    user.set_password(commandpart[2])
+                    self.send(user, 'USER MESSAGE Set password for '+user.username)
+                    
                 elif commandpart[1] == 'MODE':
                     raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement
+
                 elif commandpart[1] == 'INFO':
-                    if len(commandpart) > 3:
-                        raise Exception('too much arguments')
-                    else:
-                        if len(commandpart) == 2:
-                            testuser = user
-                        else:
-                            testuser = self.get_user_by_name(commandpart[2])
-                        info = testuser.info()
-                        infostr = jsonlib.simple_parser(info).save(self.format)
-                        self.send(user, 'USER INFO '+infostr)
+                    if len(commandpart) > 3: raise Exception('too much arguments')
+                    if len(commandpart) == 2: testuser = user
+                    else:                     testuser = self.get_user_by_name(commandpart[2], True)
+                    info = testuser.info()
+                    infostr = jsonlib.simple_parser(info).save(self.format)
+                    self.send(user, 'USER INFO '+infostr)
+
                 elif commandpart[1] == 'ADMIN':
-                    if len(commandpart) == 3:
-                        user.admin(commandpart[2])
-                    else:
-                        raise Exception('password should be one word, without spaces')
-                else:
-                    raise Exception('Unknown command, USER supports NAME, PASS, SETPASS, MODE, INFO and ADMIN')
+                    if len(commandpart) != 3: raise Exception('password should be one word, without spaces')
+                    user.admin(commandpart[2])
+                    self.send(user, 'USER MESSAGE admin identified')
+                    
+                else: raise Exception('Unknown command, USER supports NAME, PASS, SETPASS, MODE, INFO and ADMIN')
+
             elif commandpart[0] == 'GAME':
                 ###########################################################
                 ############ GAME commands
                 ###########################################################
-                raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement
+                if len(commandpart) <= 2: raise Exception('no command or channel name entered')
+
+                elif commandpart[2] == 'JOIN':
+                    if len(commandpart) != 3: raise Exception('missing channel name or misformatted command')
+                    if self.exist_game(commandpart[1]):game = self.get_game_by_name(commandpart[1]):
+                    else: game = Game(commandpart[1], self, user)
+                    game.join(user)
+
+                else:
+                    if not self.exist_game(commandpart[1]): raise Exception('game does not exist')
+                    game = self.get_get_game_by_name(commandpart[1])
+
+                    if   commandpart[2] == 'DESTROY':
+                        if len(commandpart) != 3: raise Exception('misformatted command')
+                        if game.shutdown(user): 
+                            self.activegamelist.remove(game)
+                            del game
+                        else: raise Exception('you don\t have permission to shut down the game')
+
+                    elif commandpart[2] == 'RESET':
+                        if not game.reset(user): raise Exception('you don\'t have permission to reset the game')
+
+
+
+
+
+
+
+                else: raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement
             elif commandpart[0] == 'ADMIN':
                 ###########################################################
                 ############ ADMIN commands
                 ###########################################################
-                if   not 'a' in user.modes:
-                    raise Exception('You don\' have admin status')
+                if   not 'a' in user.modes: raise Exception('You don\' have admin status')
+
                 elif commandpart[1] == 'KILL':
-                    if len(commandpart) == 3:
-                        target = self.get_user_by_name(commandpart[2])
-                        self.backend.kick(target.ident)
-                    else:
-                        raise Exception('KILL takes one command')
+                    if len(commandpart) != 3: raise Exception('KILL takes one command')
+                    target = self.get_user_by_name(commandpart[2])
+                    self.backend.kick(target.ident)
+                        
                 elif commandpart[1] == 'BAN':
                     if   commandpart[2] == 'IP':
-                        if len(commandpart) == 4 and re.search('^[0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}$',commandpart[3]):
-                            self.Database.addban(commandpart[3])
-                        else:
-                            raise Exception('Malformatted IP')
+                        if not (len(commandpart) == 4 and re.search('^[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}$',commandpart[3])): raise Exception('Malformatted IP')
+                        self.Database.addban(commandpart[3])
+                            
                     elif commandpart[2] == 'USER':
-                        if len(commandpart) == 4:
-                            user = self.get_user_by_name(commandpart[3])
-                            self.Database.addban(user.ip)
-                        else:
-                            raise Exception('Malformatted username')
-                    else:
-                        raise Exception('ADMIN BAN takes either USER or IP as subcommand')
+                        if len(commandpart) != 4: raise Exception('Malformatted username')
+                        user = self.get_user_by_name(commandpart[3], True)
+                        self.Database.addban(user.ip)
+
+                    else: raise Exception('ADMIN BAN takes either USER or IP as subcommand')
+
                 elif commandpart[1] == 'UNBAN':
                     if   commandpart[2] == 'IP':
-                        if len(commandpart) == 4 and re.search('^[0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}[.][0-9]{1:3}$',commandpart[3]):
-                            self.Database.removeban(commandpart[3])
-                        else:
-                            raise Exception('Malformatted IP')
+                        if not(len(commandpart) == 4 and re.search('^[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}$',commandpart[3])): raise Exception('Malformatted IP')
+                        self.Database.removeban(commandpart[3])
+
                     elif commandpart[2] == 'USER':
-                        if len(commandpart) == 4:
-                            user = self.get_user_by_name(commandpart[3])
-                            self.Database.removeban(user.ip)
-                        else:
-                            raise Exception('Malformatted username')
-                    else:
-                        raise Exception('ADMIN UNBAN takes either USER or IP as subcommand')
+                        if len(commandpart) != 4: raise Exception('Malformatted username')
+                        user = self.get_user_by_name(commandpart[3])
+                        self.Database.removeban(user.ip)
+                            
+                    else: raise Exception('ADMIN UNBAN takes either USER or IP as subcommand')
+
                 elif commandpart[1] == 'WIPE':
-                    if len(commandpart == 2):
-                        both_failed = 0
-                        try:
-                            self.Database.wipe(commandpart[2])
-                        except:
-                            both_failed+=1 #user not in database
-                        try:
-                            self.get_user_by_name(commandpart[2]).wipe()
-                        except:
-                            both_failed+=1 #probably couldn't find user online
-                        if both_failed == 2:
-                            raise Exception('user not in database nor online')
-                    else:
-                        raise Exception('malformatted request')
+                    if len(commandpart) != 3: raise Exception('malformatted request')
+                    self.Database.wipe(commandpart[2])
+                        
                 elif commandpart[1] == 'DESTROY':
                     raise Exception('NOT IMPLEMENTED ERROR')
+
                 elif commandpart[1] == 'EXECUTE':
-                    if len(commandpart) > 2:
-                        commandcode = ' '.join(commandpart[2:])
-                        err = res = None
+                    if len(commandpart) <= 2: raise Exception('missing argument')
+                    commandcode = ' '.join(commandpart[2:])
+                    err = res = None
+                    try:
+                        exec commandcode
+                    except SyntaxError:
                         try:
-                            exec commandcode
-                        except SyntaxError:
-                            try:
-                                res = eval(commandcode)
-                            except Exception as e:
-                                err = str(e)
+                            res = eval(commandcode)
                         except Exception as e:
                             err = str(e)
-                        if res:
-                            self.send(user, 'USER RESULT '+res)
-                        elif err:
-                            self.send(user, 'USER ERROR '+err)
+                    except Exception as e:
+                        err = str(e)
+                    if res:
+                        self.send(user, 'USER RESULT '+res)
+                    elif err:
+                        self.send(user, 'USER ERROR '+err)
                     else:
-                        raise Exception('missing argument')
+                        self.send(user, 'USER RESULT SUCCESSFUL')
+                        
                 elif commandpart[1] == 'BROADCAST':
-                    if len(commandpart) == 3:
-                        self.backend.sendall('USER ' + commandpart[2])
-                    else:
-                        raise Exception('malformatted request')
+                    if len(commandpart) != 3: raise Exception('malformatted request')
+                    self.backend.sendall('USER MESSAGE ' + commandpart[2])
+
+                else: raise Exception('Unknown command, ADMIN supports KILL, BAN, UNBAN, WIPE, DESTROY, EXECUTE and BROADCAST')
 
             elif commandpart[0] == 'QUERY':
                 ###########################################################
                 ############ QUERY command
                 ###########################################################
-                if len(commandpart) > 2:
-                    receiver = self.get_user_by_name(commandpart[1])
-                    message  = re.search('QUERY[\r\n ]+[^\r\n ]+[\r\n ]+(.*)', command, re.DOTALL).group(1)
-                    self.send(self.get_user_by_name(commandpart[1]), 'QUERY ' + user.username +' '+message)
-                else:
-                    raise Exception('no message detected')
+                if len(commandpart) <= 2: raise Exception('no message detected')
+                receiver = self.get_user_by_name(commandpart[1])
+                message  = re.search('QUERY[\r\n ]+[^\r\n ]+[\r\n ]+(.*)', command, re.DOTALL).group(1)
+                self.send(self.get_user_by_name(commandpart[1]), 'QUERY ' + user.username +' '+message)
+                    
             elif commandpart[0] == 'PONG':
                 ###########################################################
                 ############ PONG command
                 ###########################################################
                 raise Exception('NOT IMPLEMENTED ERROR') #TODO: implement, shoud reset last response timer
-            else:
+
+            else: raise Exception('Command not recognized')
                 #catchall
-                raise Exception('Command not recognized')
+                
         except Exception as error:
-            self.send(user, 'ERROR '+ str(error))
+            self.send(user, 'ERROR '+ str(error)) #an exception was thrown somewhere
 
 
     #backend code
@@ -215,16 +225,32 @@ class ChannelServer(object):
         self.backend.send(message)
     def shutdown(self):
         #graceful shutdown
-        self.backend.shutdown()
+        try: self.backend.shutdown()
+        except: pass
+        try: self.Database.shutdown()
+        except: pass
         del self.backend
+        del self.Database
 
     #utility code
-    def get_user_by_name(self, username):
+    def get_game_by_name(self, channel):
+        for game in self.activegamelist:
+            if game.name == channel:
+                return game
+        raise Exception('game not found')
+
+    def exist_game(self, channel):
+        return channel in [game.name for game in self.activegamelist]
+
+    def get_user_by_name(self, username, offline=False):
         for user in self.activeuserlist:
             if user.username == username:
                 return user
-        
+        #not in the active list and offline user selection is allowed
+        if offline and username in self.Database.accounts():
+            return TempUser(username, self.Database)
         raise Exception('user not found')
+
     def get_user_by_ident(self, ident):
         for user in self.activeuserlist:
             if user.ident == ident:
@@ -255,6 +281,7 @@ class User(object):
             raise Exception('This username is already registered')
         else:
             self.password = hashlib.md5(passhash).hexdigest() #hash password.
+            self.Database.addaccount(self.username, self.password, self.ip)
             self.modes += 'i'
     def identify(self, passhash):
         if 'i' in self.modes:
@@ -262,6 +289,7 @@ class User(object):
         password = hashlib.md5(passhash).hexdigest()
         if self.Database.verify(self.username,password):
             self.password = password
+            self.Database.updateip(self.username, self.ip)
             self.modes += 'i'
         else:
             raise Exception('Wrong password')
@@ -281,6 +309,18 @@ class User(object):
             self.modes += 'a'
         else:
             raise Exception('Wrong password')
+
+class TempUser(User):
+    #user-like object spawned when the user isn't online but things are done
+    def __init__(self, username, database):
+        self.username = username
+        self.Database = database
+        self.password, self.ip = self.Database.getinfo(self.username)
+        self.modes = ''
+        self.games = []
+        self.ident = None
+
+
 
 class Database(object):
     """wrapper around database"""
@@ -306,21 +346,29 @@ class Database(object):
             c.execute("INSERT INTO server VALUES (?,?)",("adminpassword",hashlib.md5(config.adminpass).hexdigest()))
             db.commit()
             db.close()
-        self.db = sqlite3.connect(filename)
+        self.db = sqlite3.connect(filename, check_same_thread=False)
         self.db.text_factory = str
         self.cursor = self.db.cursor()
     def ip_bans(self):
-        return [i for i in self.cursor.execute('SELECT * FROM ipbans')]
+        return [i[0] for i in self.cursor.execute('SELECT * FROM ipbans')]
     def addban(self, ip):
-        c.execute("INSERT INTO ipbans VALUES (?)",(ip,))
+        self.cursor.execute("INSERT INTO ipbans VALUES (?)",(ip,))
     def removeban(self, ip):
-        c.execute("DELETE FROM ipbans WHERE ip=?",(ip,))
+        self.cursor.execute("DELETE FROM ipbans WHERE ip=?",(ip,))
     def accounts(self):
         return [i[0] for i in self.cursor.execute('SELECT username FROM users')] #list of usernames
+    def addaccount(self, username, password, ip):
+        self.cursor.execute("INSERT INTO users VALUES (?,?,?)",(username, password, ip))
+    def updateip(self, username, ip):
+        self.cursor.execute("UPDATE users SET ip=? WHERE username=?",(ip, username))
+    def wipe(self, username):
+        self.cursor.execute("DELETE FROM users WHERE username=?",(username,))
+    def getinfo(self, username):
+        return self.cursor.execute("SELECT password, ip FROM users WHERE username=?",(username,)).fetchone()
     def verify(self, username, password):
         return (username, password) in [i for i in self.cursor.execute('SELECT username, password FROM users')] 
     def checkadminpass(self, adminpass):
-        return hashlib.md5(adminpass).hexdigest() == self.cursor.execute('SELECT value FROM server WHERE key="adminpassword"'):
+        return hashlib.md5(adminpass).hexdigest() == self.cursor.execute('SELECT value FROM server WHERE key="adminpassword"').fetchone()[0]
     def setadminpass(self, adminpass):
         self.cursor.execute('UPDATE server SET value=? WHERE key="adminpassword"',(hashlib.md5(adminpass).hexdigest(),))
 
